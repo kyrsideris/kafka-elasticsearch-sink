@@ -1,0 +1,48 @@
+---
+version: "2"
+services:
+  fast-data-dev:
+    image: landoop/fast-data-dev:latest
+    ports:
+      - "8081:8081"
+      - "8083:8083"
+      - "9092:9092"
+      - "2181:2181"
+      - "3030:3030"
+    environment:
+      REST_PORT: "0"
+      RUNTESTS: "0"
+      CONNECT_PORT: "0"
+      ADV_HOST: "127.0.0.1"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0
+    ports:
+      - "9200:9200"
+    environment:
+      discovery.type: "single-node"
+  sink:
+    image: registry.myawesome.com/docker/kafka-to-elasticsearch:1.0.0
+    environment:
+      ELASTIC_CLUSTER_URL: "http://fast-data-dev:9200"
+      KAFKA_BOOTSTRAP_SERVERS: "fast-data-dev:9092"
+      KAFKA_SCHEMA_REGISTRY_URL: "http://fast-data-dev:8081"
+      KAFKA_AUTO_OFFSET_RESET_CONFIG: "latest" # TODO: remove, only for testing
+  producer:
+    image: landoop/fast-data-dev:latest
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        kafka-topics --bootstrap-server fast-data-dev:9092 --create --topic click --partitions 3; \
+        dt() { date +'%Y-%m-%dT%H:%M:%S.%3N' ; };\
+        rstr() { openssl rand -base64 6 ; };\
+        while true; do echo "\"$$i\"|{\"session_id\":\"$$i-$$(dt)\",\"browser\":{\"string\":\"b-$$(rstr)\"},\"campaign\":{\"string\":\"c-$$(rstr)\"},\"channel\":\"h-$$(rstr)\",\"referrer\":{\"string\":\"r-$$(rstr)\"},\"ip\":{\"string\":\"0.0.0.0\"}}"; let i+=1; sleep 0.3; done | kafka-avro-console-producer \
+        --bootstrap-server fast-data-dev:9092 \
+        --topic click \
+        --property schema.registry.url=http://fast-data-dev:8081 \
+        --property parse.key=true \
+        --property key.separator="|" \
+        --property key.schema='{"type":"string"}' \
+        --property value.schema='{"type":"record","name":"ClickRecord","namespace":"com.myawesome.sink.model","fields":[{"name":"session_id","type":"string"},{"name":"browser","type":["string","null"]},{"name":"campaign","type":["string","null"]},{"name":"channel","type":"string"},{"name":"referrer","type":["string","null"],"default":"None"},{"name":"ip","type":["string","null"]}]}' \
+        --producer-property key.serializer=org.apache.kafka.common.serialization.StringSerializer \
+        --producer-property value.serializer=io.confluent.kafka.serializers.KafkaAvroSerializer
