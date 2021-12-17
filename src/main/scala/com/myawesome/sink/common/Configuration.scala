@@ -12,14 +12,14 @@ trait Configuration extends Logging {
   val kafkaConfig: ConfMap = getAllConfig("kafka") ++ mandatoryKafkaConfig
   val elasticConfig: ConfMap = getAllConfig("elastic")
 
-  private def getAllConfig(prefix: String): ConfMap = {
+  private[common] def getAllConfig(prefix: String): ConfMap = {
     (getConfigFromFile(prefix) ++ getConfigFromProps(prefix) ++ getConfigFromEnv(prefix))
       .toArray
       .map{ case (k, v) => (k.substring(prefix.length + 1), v) }
       .toMap
   }
 
-  private def getConfigFromEnv(prefix: String): ConfMap = {
+  private[common] def getConfigFromEnv(prefix: String): ConfMap = {
     sys.env
       .flatMap{ case (k, v) =>
         val lower = k.toLowerCase
@@ -30,7 +30,7 @@ trait Configuration extends Logging {
       }
   }
 
-  private def getConfigFromFile(prefix: String): ConfMap = Try {
+  private[common] def getConfigFromFile(prefix: String): ConfMap = Try {
     val configFile = sys.props.get("config.file").getOrElse("/application.properties")
     val properties = new Properties
     properties.load(getClass.getResourceAsStream(configFile))
@@ -45,12 +45,12 @@ trait Configuration extends Logging {
     Map[String, Any]()
   }
 
-  private def getConfigFromProps(prefix: String): ConfMap = {
+  private[common] def getConfigFromProps(prefix: String): ConfMap = {
     sys.props.toMap
       .flatMap{ case (k, v) =>
         val lower = k.toLowerCase
         if (lower.startsWith(prefix.toLowerCase + "."))
-          lower.substring(6) -> v :: Nil
+          lower -> v :: Nil
         else
           None
       }
