@@ -32,7 +32,7 @@ sbt clean compile jibDockerBuild
 It will create a new image and tag it with the project's version, here being 
 `registry.myawesome.com/docker/kafka-to-elasticsearch:1.0.0`. The creation time is set to linux epoch 0 by default.
 The previously created image for the project will be untagged. 
-Check [Clean up docker Environment](###-clean-up-docker-environment) to see how to clean up.
+Check [Clean up docker Environment](#clean-up-docker-environment) to see how to clean up.
 
 ```shell
 REPOSITORY                                             TAG       IMAGE ID       CREATED         SIZE
