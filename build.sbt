@@ -15,7 +15,10 @@ val versions = new {
   val elastic4s = "7.15.5"
 }
 
-Test / parallelExecution := false
+//Test / parallelExecution := false
+Test / fork := true
+Test / envVars := Map("SERVICE_FOO" -> "test")
+Test / javaOptions := Seq("-Dprop=value", "-Dservice.cli=false")
 
 libraryDependencies ++= Seq(
   "ch.qos.logback" % "logback-classic" % versions.logback,
