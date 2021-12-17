@@ -30,7 +30,7 @@ class ElasticProducer(url: String) extends AutoCloseable with Logging {
       case RequestFailure(_, _, _, error) if error.reason.startsWith("no such index") =>
         this.execute {
           createIndex(index)
-            .shards(3).replicas(2)
+            .shards(3).replicas(1)
             .mapping(
               properties(
                 textField("session_id"),
@@ -62,6 +62,4 @@ class ElasticProducer(url: String) extends AutoCloseable with Logging {
       sys.exit(1)
     }
   }
-
-
 }

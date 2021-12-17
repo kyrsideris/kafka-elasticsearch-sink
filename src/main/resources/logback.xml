@@ -10,11 +10,11 @@
         <appender-ref ref="console"/>
     </logger>
 
-    <logger name="org.apache.kafka" level="INFO" additivity="false">
+    <logger name="org.apache.kafka" level="DEBUG" additivity="false">
         <appender-ref ref="console"/>
     </logger>
 
-    <logger name="io.confluent" level="INFO" additivity="false">
+    <logger name="io.confluent" level="DEBUG" additivity="false">
         <appender-ref ref="console"/>
     </logger>
 

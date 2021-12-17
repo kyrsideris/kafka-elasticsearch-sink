@@ -1,44 +1,24 @@
 package com.myawesome.sink.elasticsearch
 
-import com.myawesome.sink.common.{Configuration, HelperSerdes, Logging}
+import com.myawesome.sink.common.{Configuration, Serdes, Logging}
 import com.myawesome.sink.model.ClickRecord
-import com.sksamuel.elastic4s.jackson.ElasticJackson.Implicits._
+import com.sksamuel.elastic4s.jackson.ElasticJackson.Implicits.JacksonJsonIndexable
 import com.sksamuel.elastic4s.requests.indexes.IndexRequest
-import io.confluent.kafka.serializers.KafkaAvroDeserializer
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, OffsetAndMetadata}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.serialization.StringDeserializer
+import org.apache.kafka.common.serialization.{Deserializer, StringDeserializer}
 
-import java.time.{Instant, ZoneId, ZoneOffset}
 import java.time.format.DateTimeFormatter
+import java.time.{Instant, ZoneId}
 import java.util.{Collection => JCollection}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Using}
 
-object ElasticSearchSink extends App with Logging with Configuration with HelperSerdes {
+object ElasticSearchSink extends App with Logging with Configuration with Serdes {
 
-//  val configFile = sys.props.get("config.file").getOrElse(getClass.getResource("/consumer.conf").getPath)
-//
-//  val usage = """
-//    |Usage: ElasticSearchSink  arg2 arg3
-//    |
-//    | arg1: arg1
-//    | arg2: arg2
-//    | arg3: arg3
-//    |
-//    |""".stripMargin
-//  if (args.length < 2 || args.length > 3) {
-//    println(usage)
-//    sys.exit(1)
-//  }
-
-
-  val kafkaConfigAdd = kafkaConfig ++ Map(
-    "key.deserializer" -> classOf[StringDeserializer].getCanonicalName,
-    "value.deserializer" -> classOf[KafkaAvroDeserializer].getCanonicalName
-  )
-  logger info "Kafka configuration: " + kafkaConfigAdd.mkString(", ")
+  val kafkaTopic = "click"
+  logger info "Kafka configuration: " + kafkaConfig.mkString(", ")
 
   val consumerListener = new ConsumerRebalanceListener {
     override def onPartitionsRevoked(partitions: JCollection[TopicPartition]): Unit =
@@ -50,14 +30,24 @@ object ElasticSearchSink extends App with Logging with Configuration with Helper
 
   import com.sksamuel.elastic4s.ElasticDsl._
   val elasticUrl = elasticConfig("cluster.url").toString
+  val timezone = elasticConfig.getOrElse("timezone", "UTC").toString.toUpperCase
+  val shards = elasticConfig.getOrElse("shards", "3").toString.toInt
+  val replicas = elasticConfig.getOrElse("replicas", "2").toString.toInt
 
-  val formatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm").withZone( ZoneOffset.UTC )
+  implicit val formatter: DateTimeFormatter = DateTimeFormatter
+    .ofPattern("yyyy-MM-dd-HH-mm")
+    .withZone(ZoneId.of(timezone))
 
   Using.Manager { use =>
-    val consumer = use(new KafkaConsumer[String, ClickRecord](kafkaConfigAdd))
-    val producer = use(new ElasticProducer(elasticUrl))
+    val keyDeserializer: Deserializer[String] = use(new StringDeserializer())
+    val valueDeserializer: Deserializer[ClickRecord] = use(reflectionAvroDeserializer4S[ClickRecord])
+    valueDeserializer.configure(kafkaConfig.asJava, false)
 
-    consumer.subscribe(List("click").asJava, consumerListener)
+    val consumer = use(new KafkaConsumer[String, ClickRecord](kafkaConfig, keyDeserializer, valueDeserializer))
+    val producer = use(new ElasticProducer(elasticUrl))
+    var indicesCreated = scala.collection.mutable.Set[String]()
+
+    consumer.subscribe(List(kafkaTopic).asJava, consumerListener)
 
     val balancer = Balancer()
 
@@ -65,37 +55,58 @@ object ElasticSearchSink extends App with Logging with Configuration with Helper
       val records = consumer.poll(balancer.timeout).asScala.toArray
       if (!records.isEmpty)
         balancer.time {
-          val earliestTimestamp = records.map(_.timestamp()).min
-          val startOfQuarter = Instant.ofEpochMilli(findStartOfQuarter(earliestTimestamp))
+          val indicesInRecords = records.map(r => formatIndex(kafkaTopic, r.timestamp())).toSet
+          val indicesToCreate = indicesInRecords -- indicesCreated
 
-          producer.createClickIndex("click_" + formatter.format(startOfQuarter))
+          val indicesNew = indicesToCreate
+            .flatMap { index =>
+              producer.execute {
+                createIndex(index).shards(shards).replicas(replicas)
+              }.map { response =>
+                // There is a chance that the index exists when this batch is trying to create it
+                // in this case consider the index successfully created.
+                if (response.isError && response.error.`type` != "resource_already_exists_exception") {
+                  // Log the error but continue with insert
+                  logger error s"Failed to create index: " + index
+                  response.error.asException.printStackTrace()
+                  Nil
+                }
+                else {
+                  logger info s"Index created successfully: " + index
+                  index :: Nil
+                }
+              }.await
+            }
+          // Add newly created indices to the set of already created
+          indicesCreated ++= indicesNew
 
-          records
+          val offsets = records
             .groupBy(record => (record.topic(), record.partition()))
-            .foreach { case (group, partitionRecords) =>
-              val topic = group._1
-              val partition = group._2
+            .map { case ((topic, partition), partitionRecords) =>
               val records = partitionRecords.sortBy(_.offset()) // Maybe redundant
 
               logger debug s"Indexing records " +
                 s"for topic=$topic, partition=$partition " +
                 s"offsets=[${records.head.offset()}, ${records.last.offset()}]"
 
-              val indexRequests = records.map(r => IndexRequest(index = "click").doc(r.value()))
-
               producer.execute {
-                bulk(indexRequests)
-              }.onComplete {
+                bulk(
+                  records.map(r =>
+                    IndexRequest(index = formatIndex(kafkaTopic, r.timestamp()))
+                      .doc(r.value()))
+                )
+              }.transform {
                 case Success(response) if response.isSuccess =>
-                  val offsets = Map(
+                  Success(
                     new TopicPartition(topic, partition) -> new OffsetAndMetadata(records.last.offset())
-                  ).asJava
-                  consumer.commitSync(offsets)
+                  )
 
-                case Success(response) if !response.isSuccess =>
+                case Success(response) if response.isError =>
                   logger error s"Error indexing records " +
                     s"for topic=$topic, partition=$partition " +
-                    s"offsets=[${records.head.offset()}, ${records.last.offset()}]"
+                    s"offsets=[${records.head.offset()}, ${records.last.offset()}] " +
+                    s"Error=${response.error.`type`} ${response.error.reason}"
+                  Failure(response.error.asException)
 
                 case Failure(exception) =>
                   logger error s"Error indexing records " +
@@ -103,17 +114,35 @@ object ElasticSearchSink extends App with Logging with Configuration with Helper
                     s"offsets=[${records.head.offset()}, ${records.last.offset()}] " +
                     s"Exception=${exception.toString}"
                   exception.printStackTrace()
+                  Failure(exception)
               }
             }
+            .collect(_.await)
+            .toMap.asJava
+
+          // Commit in one go outside of inner threads because
+          // KafkaConsumer is not safe for multi-threaded access
+          consumer.commitSync(offsets)
         }
 
       logger debug s"Balancing: block=${balancer.block}, idle=${balancer.idle}"
       balancer.sleep()
     }
+  } match {
+    case Success(_) =>
+      logger info "Closing sink"
+    case Failure(e) =>
+      logger error s"Exception was thrown during operation: ${e.getMessage}"
+      e.printStackTrace()
   }
 
-  def findStartOfQuarter(timestampMs: Long): Long = {
+  private def findStartOfQuarter(timestampMs: Long): Long = {
     timestampMs - (timestampMs % (15*60*1000))
   }
 
+  private def formatIndex(topic: String, timestamp: Long)(implicit formatter: DateTimeFormatter): String = {
+    topic + "_" + formatter.format(
+      Instant.ofEpochMilli(findStartOfQuarter(timestamp))
+    )
+  }
 }

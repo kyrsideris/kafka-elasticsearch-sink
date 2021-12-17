@@ -10,7 +10,7 @@ import org.apache.kafka.common.serialization.{Deserializer, Serializer}
  * Influenced by loicmdivad.
  * URL: https://github.com/DivLoic/kafka-application4s
  */
-trait HelperSerdes {
+trait Serdes {
 
     implicit lazy val valueFormat: RecordFormat[ClickRecord] = RecordFormat[ClickRecord]
 
