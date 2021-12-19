@@ -1,6 +1,6 @@
 package com.myawesome.sink.elasticsearch
 
-import com.myawesome.sink.common.{Configuration, Serdes, Logging}
+import com.myawesome.sink.common.{Configuration, Logging, Serdes}
 import com.myawesome.sink.model.ClickRecord
 import com.sksamuel.elastic4s.jackson.ElasticJackson.Implicits.JacksonJsonIndexable
 import com.sksamuel.elastic4s.requests.indexes.IndexRequest
@@ -11,14 +11,20 @@ import org.apache.kafka.common.serialization.{Deserializer, StringDeserializer}
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneId}
 import java.util.{Collection => JCollection}
+import scala.collection.mutable.{Set => MutSet}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Using}
 
 object ElasticSearchSink extends App with Logging with Configuration with Serdes {
 
-  val kafkaTopic = "click"
   logger info "Kafka configuration: " + kafkaConfig.mkString(", ")
+
+  val kafkaTopic = kafkaConfig("topic").toString
+  val elasticUrl = elasticConfig("cluster.url").toString
+  val timezone = elasticConfig.getOrElse("timezone", "UTC").toString.toUpperCase
+  val shards = elasticConfig.getOrElse("shards", "3").toString.toInt
+  val replicas = elasticConfig.getOrElse("replicas", "2").toString.toInt
 
   val consumerListener = new ConsumerRebalanceListener {
     override def onPartitionsRevoked(partitions: JCollection[TopicPartition]): Unit =
@@ -29,10 +35,6 @@ object ElasticSearchSink extends App with Logging with Configuration with Serdes
   }
 
   import com.sksamuel.elastic4s.ElasticDsl._
-  val elasticUrl = elasticConfig("cluster.url").toString
-  val timezone = elasticConfig.getOrElse("timezone", "UTC").toString.toUpperCase
-  val shards = elasticConfig.getOrElse("shards", "3").toString.toInt
-  val replicas = elasticConfig.getOrElse("replicas", "2").toString.toInt
 
   implicit val formatter: DateTimeFormatter = DateTimeFormatter
     .ofPattern("yyyy-MM-dd-HH-mm")
@@ -45,7 +47,10 @@ object ElasticSearchSink extends App with Logging with Configuration with Serdes
 
     val consumer = use(new KafkaConsumer[String, ClickRecord](kafkaConfig, keyDeserializer, valueDeserializer))
     val producer = use(new ElasticProducer(elasticUrl))
-    var indicesCreated = scala.collection.mutable.Set[String]()
+    var indicesCreated = MutSet[String]()
+    // hold indices of a week, plus 6 hours,
+    // TODO: configure by using Kafka's retention period
+    val numIndicesToRemember = (7 * 24 + 6) * 60 / 15
 
     consumer.subscribe(List(kafkaTopic).asJava, consumerListener)
 
@@ -58,27 +63,12 @@ object ElasticSearchSink extends App with Logging with Configuration with Serdes
           val indicesInRecords = records.map(r => formatIndex(kafkaTopic, r.timestamp())).toSet
           val indicesToCreate = indicesInRecords -- indicesCreated
 
-          val indicesNew = indicesToCreate
-            .flatMap { index =>
-              producer.execute {
-                createIndex(index).shards(shards).replicas(replicas)
-              }.map { response =>
-                // There is a chance that the index exists when this batch is trying to create it
-                // in this case consider the index successfully created.
-                if (response.isError && response.error.`type` != "resource_already_exists_exception") {
-                  // Log the error but continue with insert
-                  logger error s"Failed to create index: " + index
-                  response.error.asException.printStackTrace()
-                  Nil
-                }
-                else {
-                  logger info s"Index created successfully: " + index
-                  index :: Nil
-                }
-              }.await
-            }
+          // Given indices to create, get indices actually created
+          val indicesNew = producer.createIndices(indicesToCreate, shards, replicas)
+
           // Add newly created indices to the set of already created
           indicesCreated ++= indicesNew
+          indicesCreated = trimIndices(indicesCreated, numIndicesToRemember)
 
           val offsets = records
             .groupBy(record => (record.topic(), record.partition()))
@@ -144,5 +134,12 @@ object ElasticSearchSink extends App with Logging with Configuration with Serdes
     topic + "_" + formatter.format(
       Instant.ofEpochMilli(findStartOfQuarter(timestamp))
     )
+  }
+
+  private def trimIndices(indicesCreated: MutSet[String], numRemember: Int): MutSet[String] = {
+    if (indicesCreated.size > numRemember)
+      indicesCreated.toArray.sorted.takeRight(numRemember).to(MutSet)
+    else
+      indicesCreated
   }
 }
