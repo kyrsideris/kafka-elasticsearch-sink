@@ -8,8 +8,13 @@ import com.sksamuel.elastic4s.http.JavaClient
 
 import scala.concurrent.ExecutionContext.Implicits.global
 
-
+/**
+ * ElasticProducer for pushing data to ElasticSearch
+ *   It is using to provide a AutoCloseable interface of [[com.sksamuel.elastic4s.ElasticClient]]
+ * @param url the URL of ElasticSearch
+ */
 class ElasticProducer(url: String) extends AutoCloseable with Logging {
+  // TODO: Fix AutoCloseable after this discussion https://github.com/sksamuel/elastic4s/issues/2588
   private val props = ElasticProperties(url)
   private val elasticClient = ElasticClient(JavaClient(props))
   def execute[T, U, F[_]](t: T)(implicit

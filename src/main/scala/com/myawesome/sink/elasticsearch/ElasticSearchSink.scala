@@ -16,6 +16,12 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Using}
 
+
+/**
+ * ElasticSearchSink app to consume data from Kafka and publish to ElasticSearch
+ *   grouped into 15mins intervals and creating ElasticSearch indices based on Kafka message
+ *   timestamp with format `${topic_name}_${yyyy-MM-dd-HH-mm}`.
+ */
 object ElasticSearchSink extends App with Logging with Configuration with Serdes {
 
   logger info "Kafka configuration: " + kafkaConfig.mkString(", ")

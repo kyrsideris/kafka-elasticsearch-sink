@@ -4,6 +4,15 @@ import java.time.{Duration => JDuration}
 import java.time.temporal.ChronoUnit
 import scala.concurrent.duration.{Duration, DurationInt, DurationLong}
 
+/**
+ * Balancer of consumption and production timing
+ *   FIXME: This is a stub, first attempt on forward and backward pressure.
+ * @param await time that consumption will wait until Kafka consumer poll times out
+ * @param pause time that consumption/producer will pause after every block
+ * @param min minimum duration for await and pause
+ * @param max maximum duration for await and pause
+ * @param threshold threshold time to trigger the update function
+ */
 class Balancer(private var await: Duration,
                private var pause: Duration,
                min: Duration = 100.millis,
