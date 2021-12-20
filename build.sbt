@@ -13,6 +13,7 @@ val versions = new {
   val kafka = "2.6.0"
   val confluent = "6.2.1"
   val elastic4s = "7.15.5"
+  val testcontainers = "0.39.12"
 }
 
 //Test / parallelExecution := false
@@ -27,6 +28,8 @@ libraryDependencies ++= Seq(
   "io.confluent" % "kafka-avro-serializer" % versions.confluent,
   "com.sksamuel.elastic4s" %% "elastic4s-client-esjava" % versions.elastic4s,
   "com.sksamuel.elastic4s" %% "elastic4s-json-jackson" % versions.elastic4s,
+  "com.dimafeng" %% "testcontainers-scala-scalatest" % versions.testcontainers % Test,
+  "com.dimafeng" %% "testcontainers-scala-elasticsearch" % versions.testcontainers % Test,
   "org.scalatest" %% "scalatest" % versions.scalaTest % Test
 )
 

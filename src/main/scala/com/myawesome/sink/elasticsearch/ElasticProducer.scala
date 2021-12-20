@@ -27,6 +27,7 @@ class ElasticProducer(url: String) extends AutoCloseable with Logging {
         this.execute {
           createIndex(index).shards(shards).replicas(replicas)
         }.map { response =>
+          println(s"Response: $response")
           // There is a chance that the index exists when this batch is trying to create it
           // in this case consider the index successfully created.
           if (response.isError && response.error.`type` != "resource_already_exists_exception") {
