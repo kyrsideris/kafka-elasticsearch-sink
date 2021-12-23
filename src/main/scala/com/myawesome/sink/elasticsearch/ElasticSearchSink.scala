@@ -26,7 +26,7 @@ object ElasticSearchSink extends App with Logging with Configuration with Serdes
 
   logger info "Kafka configuration: " + kafkaConfig.mkString(", ")
 
-  val kafkaTopic = kafkaConfig("topic").toString
+  val kafkaTopic = kafkaConfig("topic.consume").toString
   val elasticUrl = elasticConfig("cluster.url").toString
   val timezone = elasticConfig.getOrElse("timezone", "UTC").toString.toUpperCase
   val shards = elasticConfig.getOrElse("shards", "3").toString.toInt

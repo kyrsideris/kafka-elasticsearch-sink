@@ -12,6 +12,8 @@
       <env name="ELASTIC_TIMEZONE" value="UTC" />
       <env name="ELASTIC_SHARDS" value="3" />
       <env name="ELASTIC_REPLICAS" value="2" />
+      <env name="KAFKA_TOPIC_CONSUME" value="click" />
+      <env name="KAFKA_TOPIC_PRODUCE" value="click_output" />
     </envs>
     <module name="kafka-to-elasticsearch" />
     <method v="2" />
